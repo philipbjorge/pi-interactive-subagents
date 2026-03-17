@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Text } from "@mariozechner/pi-tui";
-import { dirname, join } from "node:path";
-import { readdirSync, statSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import {
   isCmuxAvailable,
@@ -100,6 +100,16 @@ function formatElapsed(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}m ${s}s`;
+}
+
+/**
+ * Build the artifact directory path for the current session.
+ * Same convention as the write_artifact tool:
+ *   ~/.pi/history/<project>/artifacts/<session-id>/
+ */
+function getArtifactDir(cwd: string, sessionId: string): string {
+  const project = basename(cwd);
+  return join(homedir(), ".pi", "history", project, "artifacts", sessionId);
 }
 
 function formatBytes(bytes: number): string {
@@ -276,12 +286,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           }
         }
 
-        const taskFile = join(tmpdir(), `subagent-task-${Date.now()}.md`);
-        writeFileSync(taskFile, fullTask, "utf8");
-        parts.push(`@${taskFile}`);
+        // Write context to a persistent artifact file instead of a temp file.
+        // This shows up as a visible file write and persists as a record of
+        // what context was sent to the sub-agent.
+        const sessionId = ctx.sessionManager.getSessionId();
+        const artifactDir = getArtifactDir(ctx.cwd, sessionId);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const artifactName = `context/${params.name.toLowerCase().replace(/\s+/g, "-")}-${timestamp}.md`;
+        const artifactPath = join(artifactDir, artifactName);
+        mkdirSync(dirname(artifactPath), { recursive: true });
+        writeFileSync(artifactPath, fullTask, "utf8");
+        parts.push(`@${artifactPath}`);
 
         const piCommand = parts.join(" ");
-        const command = `${piCommand}; rm -f ${shellEscape(taskFile)}; echo '__SUBAGENT_DONE_'${exitStatusVar()}'__'`;
+        const command = `${piCommand}; echo '__SUBAGENT_DONE_'${exitStatusVar()}'__'`;
 
         // Send to surface
         sendCommand(surface, command);
@@ -290,10 +308,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         // render it before we enter the blocking poll loop.
         // Without this await, process.nextTick renders never fire because
         // the setup code is fully synchronous.
-        const contextDesc = params.fork
-          ? `forked session + ${formatBytes(contextBytes)} task`
-          : `${formatBytes(contextBytes)} context`;
         const skillDesc = skillNames.length > 0 ? ` · skills: ${skillNames.join(", ")}` : "";
+        const contextDesc = `${artifactName} (${formatBytes(contextBytes)})${skillDesc}`;
         onUpdate?.({
           content: [{ type: "text", text: "starting…" }],
           details: {
@@ -302,7 +318,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
             task: params.task,
             startTime,
             phase: "starting",
-            contextDesc: `${contextDesc}${skillDesc}`,
+            contextDesc,
           },
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -340,7 +356,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
                   task: params.task,
                   startTime,
                   phase: "loading",
-                  contextDesc: `${contextDesc}${skillDesc}`,
+                  contextDesc,
                 },
               });
             }
