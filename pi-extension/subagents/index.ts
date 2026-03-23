@@ -661,7 +661,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         if (preview) {
           text += "\n" + theme.fg("text", preview);
         }
-        text += " " + theme.fg("muted", `(${keyHint("expandTools", "to expand")})`);
+        text += " " + theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`);
       }
 
       return new Text(text, 0, 0);
@@ -906,7 +906,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           text += "\n  " + icon + " " + theme.fg("toolTitle", r.name) +
             theme.fg("dim", ` (${formatElapsed(r.elapsed)})`);
         }
-        text += " " + theme.fg("muted", `(${keyHint("expandTools", "to expand")})`);
+        text += " " + theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`);
       }
 
       return new Text(text, 0, 0);
