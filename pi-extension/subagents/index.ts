@@ -32,9 +32,6 @@ const SubagentParams = Type.Object({
   systemPrompt: Type.Optional(
     Type.String({ description: "Appended to system prompt (role instructions)" })
   ),
-  interactive: Type.Optional(
-    Type.Boolean({ description: "true = user collaborates, false = autonomous. Default: true" })
-  ),
   model: Type.Optional(Type.String({ description: "Model override (overrides agent default)" })),
   skills: Type.Optional(Type.String({ description: "Comma-separated skills (overrides agent default)" })),
   tools: Type.Optional(Type.String({ description: "Comma-separated tools (overrides agent default)" })),
@@ -224,7 +221,6 @@ interface SubagentResult {
   task: string;
   summary: string;
   sessionFile?: string;
-  interactive: boolean;
   exitCode: number;
   elapsed: number;
   error?: string;
@@ -243,7 +239,6 @@ async function runSubagent(
   onProgress?: (info: { elapsed: string; entries?: number; bytes?: number }) => void,
   options?: { surface?: string; claimedFiles?: Set<string> },
 ): Promise<SubagentResult> {
-  const interactive = params.interactive !== false;
   const startTime = Date.now();
 
   const agentDefs = params.agent ? loadAgentDefaults(params.agent) : null;
@@ -274,9 +269,7 @@ async function runSubagent(
     // When forking, the sub-agent already has the full conversation context.
     // Only send the user's task as a clean message — no wrapper instructions
     // that would confuse the agent into thinking it needs to restart.
-    const modeHint = interactive
-      ? "The user will interact with you here. When done, they will exit with Ctrl+D."
-      : "Complete your task autonomously. When finished, call the subagent_done tool to close this session.";
+    const modeHint = "Complete your task. When finished, call the subagent_done tool. The user can interact with you at any time.";
     const summaryInstruction =
       "Your FINAL assistant message (before calling subagent_done or before the user exits) should summarize what you accomplished.";
     const denySet = resolveDenyTools(agentDefs);
@@ -393,9 +386,8 @@ async function runSubagent(
     const claimedFiles = options?.claimedFiles;
 
     // Poll for exit
-    const interval = interactive ? 3000 : 1000;
     const exitCode = await pollForExit(surface, signal, {
-      interval,
+      interval: 1000,
       onTick() {
         const elapsed = formatElapsed(Math.floor((Date.now() - startTime) / 1000));
         const progress = measureSessionProgress(
@@ -456,7 +448,6 @@ async function runSubagent(
       task: params.task,
       summary,
       sessionFile: subSessionFile?.path,
-      interactive,
       exitCode,
       elapsed,
     };
@@ -473,7 +464,6 @@ async function runSubagent(
         name: params.name,
         task: params.task,
         summary: "Subagent cancelled.",
-        interactive,
         exitCode: 1,
         elapsed: Math.floor((Date.now() - startTime) / 1000),
         error: "cancelled",
@@ -483,7 +473,6 @@ async function runSubagent(
       name: params.name,
       task: params.task,
       summary: `Subagent error: ${err?.message ?? String(err)}`,
-      interactive,
       exitCode: 1,
       elapsed: Math.floor((Date.now() - startTime) / 1000),
       error: err?.message ?? String(err),
@@ -505,17 +494,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     label: "Subagent",
     description:
       "Spawn a sub-agent in a dedicated terminal multiplexer pane with shared session context. " +
-      "The sub-agent branches from the current session, works independently (interactive or autonomous), " +
+      "The sub-agent branches from the current session, works independently, " +
       "and returns results via a branch summary. Supports cmux, tmux, and zellij.",
     promptSnippet:
       "Spawn a sub-agent in a dedicated terminal multiplexer pane with shared session context. " +
-      "The sub-agent branches from the current session, works independently (interactive or autonomous), " +
+      "The sub-agent branches from the current session, works independently, " +
       "and returns results via a branch summary. Supports cmux, tmux, and zellij.",
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const interactive = params.interactive !== false;
-
       // Prevent self-spawning (e.g. planner spawning another planner)
       const currentAgent = process.env.PI_SUBAGENT_AGENT;
       if (params.agent && currentAgent && params.agent === currentAgent) {
@@ -543,7 +530,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         content: [{ type: "text", text: "starting…" }],
         details: {
           name: params.name,
-          interactive,
           task: params.task,
           startTime,
         },
@@ -554,7 +540,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           content: [{ type: "text", text: `${info.elapsed} elapsed` }],
           details: {
             name: params.name,
-            interactive,
             task: params.task,
             startTime,
             sessionEntries: info.entries,
@@ -584,7 +569,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           name: params.name,
           task: params.task,
           sessionFile: result.sessionFile,
-          interactive,
           exitCode: result.exitCode,
           elapsed: result.elapsed,
         },
@@ -592,15 +576,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const interactive = args.interactive !== false;
-      const icon = interactive ? "▸" : "▹";
-      const mode = interactive ? "interactive session" : "autonomous";
       const agent = args.agent ? theme.fg("dim", ` (${args.agent})`) : "";
       const cwdHint = args.cwd ? theme.fg("dim", ` in ${args.cwd}`) : "";
       let text =
-        `${icon} ` +
+        "▸ " +
         theme.fg("toolTitle", theme.bold(args.name ?? "(unnamed)")) +
-        theme.fg("dim", ` — ${mode}`) +
         agent +
         cwdHint;
 
@@ -626,7 +606,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     renderResult(result, { expanded, isPartial }, theme) {
       const details = result.details as any;
       const name = details?.name ?? "(unnamed)";
-      const interactive = details?.interactive !== false;
 
       if (isPartial) {
         const startTime: number | undefined = details?.startTime;
@@ -644,15 +623,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           progressParts.push("loading…");
         }
 
-        let text = theme.fg("dim", progressParts.join(" · "));
-
-        if (interactive) {
-          text +=
-            "\n" +
-            theme.fg("accent", `Switch to the "${name}" terminal. `) +
-            theme.fg("dim", "Exit (Ctrl+D) to return.");
-        }
-
+        const text = theme.fg("dim", progressParts.join(" · "));
         return new Text(text, 0, 0);
       }
 
@@ -830,8 +801,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       // Run all agents concurrently
       const effectiveSignal = signal ?? new AbortController().signal;
       const promises = params.agents.map(async (agentParams, i) => {
-        // Force interactive: false for parallel agents
-        const fullParams = { ...agentParams, interactive: false as const, fork: false as const };
+        const fullParams = { ...agentParams, fork: false as const };
 
         const result = await runSubagent(fullParams, ctx, effectiveSignal, (info) => {
           agentStatus.set(agentParams.name, {
@@ -1271,8 +1241,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const task = args?.trim() || "";
       const toolCall = task
-        ? `Use subagent to start an interactive iterate session. fork: true, name: "Iterate", task: ${JSON.stringify(task)}`
-        : `Use subagent to start an interactive iterate session. fork: true, name: "Iterate", task: "The user wants to do some hands-on work. Help them with whatever they need."`;
+        ? `Use subagent to start an iterate session. fork: true, name: "Iterate", task: ${JSON.stringify(task)}`
+        : `Use subagent to start an iterate session. fork: true, name: "Iterate", task: "The user wants to do some hands-on work. Help them with whatever they need."`;
       pi.sendUserMessage(toolCall);
     },
   });
@@ -1298,7 +1268,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       }
 
       const taskText = task || `You are the ${agentName} agent. Wait for instructions.`;
-      const toolCall = `Use subagent with agent: "${agentName}", name: "${agentName[0].toUpperCase() + agentName.slice(1)}", interactive: false, task: ${JSON.stringify(taskText)}`;
+      const toolCall = `Use subagent with agent: "${agentName}", name: "${agentName[0].toUpperCase() + agentName.slice(1)}", task: ${JSON.stringify(taskText)}`;
       pi.sendUserMessage(toolCall);
     },
   });
