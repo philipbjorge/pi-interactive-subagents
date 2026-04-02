@@ -347,6 +347,9 @@ export function renameCurrentTab(title: string): void {
   }
 
   if (backend === "tmux") {
+    if (process.env.PI_SUBAGENT_RENAME_TMUX_WINDOW !== "1") {
+      return;
+    }
     const paneId = process.env.TMUX_PANE;
     if (!paneId) throw new Error("TMUX_PANE not set");
     const windowId = execFileSync("tmux", ["display-message", "-p", "-t", paneId, "#{window_id}"], {
