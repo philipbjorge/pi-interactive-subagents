@@ -6,6 +6,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Box, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { writeFileSync } from "node:fs";
 
 export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
   return agentStarted;
@@ -147,25 +148,38 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // SPIKE TODO: temporary test tool — remove after verification
-  // Findings: pi.on("input") returns void (no unsubscribe fn, no pi.off()).
-  // For one-shot cleanup, use a `fired` flag. Alternatively, use
-  // pi.ui.onTerminalInput() which DOES return an unsubscribe function.
   pi.registerTool({
-    name: "_test_block",
-    label: "Test Block",
-    description: "TEST ONLY — blocks until user input is received via pi.on('input')",
-    parameters: Type.Object({}),
-    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+    name: "caller_ping",
+    label: "Caller Ping",
+    description:
+      "Send a help request to the parent agent and block until they respond. " +
+      "Use when you're stuck, need clarification, or need the parent to take action. " +
+      "The parent will be notified and can inspect your terminal or send you input.",
+    parameters: Type.Object({
+      message: Type.String({ description: "What you need help with" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const sessionFile = process.env.PI_SUBAGENT_SESSION;
+      if (!sessionFile) {
+        throw new Error(
+          "caller_ping is only available in subagent contexts. " +
+          "PI_SUBAGENT_SESSION environment variable is not set."
+        );
+      }
+
+      const pingData = {
+        name: process.env.PI_SUBAGENT_NAME ?? "subagent",
+        message: params.message,
+      };
+      writeFileSync(`${sessionFile}.ping`, JSON.stringify(pingData));
+
       return new Promise((resolve) => {
         let fired = false;
-        console.log("[_test_block] Blocking... waiting for input");
-        pi.on("input", (event) => {
+        pi.on("input", () => {
           if (fired) return;
           fired = true;
-          console.log("[_test_block] Input received! Unblocking. text:", (event as any).text);
           resolve({
-            content: [{ type: "text", text: `Input received! Unblocking. text: ${(event as any).text}` }],
+            content: [{ type: "text", text: "Parent responded. Resuming." }],
             details: {},
           });
         });
