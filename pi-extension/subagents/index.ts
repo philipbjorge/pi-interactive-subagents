@@ -364,7 +364,9 @@ function renderSubagentWidgetLines(agents: RunningSubagent[], width: number): st
     const right =
       agent.entries != null && agent.bytes != null
         ? ` ${agent.entries} msgs (${formatBytes(agent.bytes)}) `
-        : " starting… ";
+        : agent.cli === "claude"
+          ? " running… "
+          : " starting… ";
 
     lines.push(borderLine(left, right, width));
   }
@@ -488,9 +490,9 @@ async function launchSubagent(
       cmdParts.push("--resume", shellEscape(params.resumeSessionId));
     }
 
-    if (!params.resumeSessionId) {
-      cmdParts.push(shellEscape(params.task));
-    }
+    // Always pass the task as the prompt — even for resumed sessions,
+    // the caller's task is the follow-up instruction.
+    cmdParts.push(shellEscape(params.task));
 
     const cdPrefix = effectiveCwd ? `cd ${shellEscape(effectiveCwd)} && ` : "";
     const command = `${cdPrefix}${cmdParts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;
