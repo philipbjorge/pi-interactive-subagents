@@ -32,6 +32,27 @@ import {
   seedSubagentSessionFile,
 } from "./session.ts";
 
+// Survive /reload: clear timers and abort poll loops from the previous module load.
+// /reload re-imports this file, giving fresh module-level state, but closures from
+// the old module keep running. See https://github.com/HazAT/pi-interactive-subagents/issues/5
+const WIDGET_INTERVAL_KEY = Symbol.for("pi-subagents/widget-interval");
+const POLL_ABORT_KEY = Symbol.for("pi-subagents/poll-abort-controller");
+
+{
+  const prevInterval = (globalThis as any)[WIDGET_INTERVAL_KEY];
+  if (prevInterval) {
+    clearInterval(prevInterval);
+    (globalThis as any)[WIDGET_INTERVAL_KEY] = null;
+  }
+  const prevAbort = (globalThis as any)[POLL_ABORT_KEY] as AbortController | undefined;
+  if (prevAbort) prevAbort.abort();
+  (globalThis as any)[POLL_ABORT_KEY] = new AbortController();
+}
+
+function getModuleAbortSignal(): AbortSignal {
+  return ((globalThis as any)[POLL_ABORT_KEY] as AbortController).signal;
+}
+
 const SubagentParams = Type.Object({
   name: Type.String({ description: "Display name for the subagent" }),
   task: Type.String({ description: "Task/prompt for the sub-agent" }),
@@ -475,6 +496,7 @@ function updateWidget() {
     if (widgetInterval) {
       clearInterval(widgetInterval);
       widgetInterval = null;
+      (globalThis as any)[WIDGET_INTERVAL_KEY] = null;
     }
     return;
   }
@@ -508,6 +530,7 @@ function startWidgetRefresh() {
   widgetInterval = setInterval(() => {
     updateWidget();
   }, 1000);
+  (globalThis as any)[WIDGET_INTERVAL_KEY] = widgetInterval;
 }
 
 /**
@@ -828,7 +851,7 @@ async function watchSubagent(
   const { name, task, surface, startTime, sessionFile } = running;
 
   try {
-    const result = await pollForExit(surface, signal, {
+    const result = await pollForExit(surface, AbortSignal.any([signal, getModuleAbortSignal()]), {
       interval: 1000,
       sessionFile,
       sentinelFile: running.sentinelFile,
@@ -942,7 +965,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     if (widgetInterval) {
       clearInterval(widgetInterval);
       widgetInterval = null;
+      (globalThis as any)[WIDGET_INTERVAL_KEY] = null;
     }
+    const moduleAbort = (globalThis as any)[POLL_ABORT_KEY] as AbortController | undefined;
+    if (moduleAbort) moduleAbort.abort();
     for (const [_id, agent] of runningSubagents) {
       agent.abortController?.abort();
     }
