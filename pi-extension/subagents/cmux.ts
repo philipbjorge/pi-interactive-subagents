@@ -200,7 +200,10 @@ export function createSurface(name: string): string {
     cmuxSubagentPane = null;
   }
 
-  const surface = createSurfaceSplit(name, "right");
+  // On tmux, target the parent pi's pane so splits follow the agent, not the user's focus.
+  // See https://github.com/HazAT/pi-interactive-subagents/issues/12
+  const fromSurface = backend === "tmux" ? process.env.TMUX_PANE : undefined;
+  const surface = createSurfaceSplit(name, "right", fromSurface);
 
   // For cmux, remember the pane so future subagents become tabs in it
   if (backend === "cmux") {
