@@ -4,7 +4,7 @@ description: >
   Planning workflow. Spawns a spec agent to clarify WHAT to build, then a
   planner agent to figure out HOW. Use when asked to "plan", "brainstorm",
   "I want to build X", or "let's design". Requires the subagents extension
-  and a supported multiplexer (cmux/tmux/zellij).
+  and a supported multiplexer.
 ---
 
 # Plan
@@ -70,7 +70,7 @@ Standard filenames:
 
 ```typescript
 subagent({
-  name: "🔍 Scout",
+  name: "scout.plan_context",
   agent: "scout",
   task: `Analyze the codebase for [user's request area]. Map file structure, key modules, patterns, conventions, and existing code related to [feature area]. Focus on what a spec agent and planner would need to understand.
 
@@ -88,9 +88,8 @@ Spawn the interactive spec agent with the scout's context. The `spec` agent clar
 
 ```typescript
 subagent({
-  name: "📝 Spec",
+  name: "spec.clarify_request",
   agent: "spec",
-  interactive: true,
   task: `Define spec: [what the user wants to build]
 
 Scout context:
@@ -113,9 +112,8 @@ Read the spec artifact, then spawn the planner. Pass both the spec AND the scout
 read({ path: ".pi/plans/YYYY-MM-DD-<name>/spec.md" });
 
 subagent({
-  name: "💬 Planner",
+  name: "planner.design_implementation",
   agent: "planner",
-  interactive: true,
   task: `Plan implementation for spec at: .pi/plans/YYYY-MM-DD-<name>/spec.md
 
 Scout context:
@@ -135,7 +133,7 @@ If the spec or planner significantly changed scope (e.g. new subsystems, differe
 
 ```typescript
 subagent({
-  name: "🔍 Scout (updated scope)",
+  name: "scout.scope_refresh",
   agent: "scout",
   task: "The plan changed scope. Gather context for [new areas]. Read the plan at [plan path]. Focus on [specific files/modules the planner identified that weren't in the original scout].",
 });
@@ -166,14 +164,14 @@ Spawn workers sequentially. Each worker gets the plan path and scout context:
 ```typescript
 // Workers execute todos sequentially — one at a time
 subagent({
-  name: "🔨 Worker 1/N",
+  name: "worker.todo_xxxx",
   agent: "worker",
   task: "Implement TODO-xxxx. Mark the todo as done. Plan: [plan path]\n\nScout context: [paste scout summary from Phase 2, plus any re-scout from Phase 4]",
 });
 
 // Check result, then next todo
 subagent({
-  name: "🔨 Worker 2/N",
+  name: "worker.todo_yyyy",
   agent: "worker",
   task: "Implement TODO-yyyy. Mark the todo as done. Plan: [plan path]\n\nScout context: [paste scout summary]",
 });
@@ -189,9 +187,8 @@ After all todos are complete:
 
 ```typescript
 subagent({
-  name: "Reviewer",
+  name: "reviewer.final_review",
   agent: "reviewer",
-  interactive: false,
   task: "Review the recent changes. Plan: [plan path]",
 });
 ```
